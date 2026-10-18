@@ -1,0 +1,69 @@
+# =============================================================
+#  Outlook EML Saver — konfiguracija
+#  Edituj ovu datoteku, ne skriptu.
+#  Putanje moraju biti apsolutne (npr. C:\Outlook\EML)
+#  %USERPROFILE% i %USERNAME% se automatski razvijaju.
+# =============================================================
+
+[paths]
+
+# Folder u koji se snimaju EML fajlovi
+save_folder = S:\Outlook\OSA
+
+# Windows Downloads folder — Outlook ponekad ovde privremeno preuzme mejl
+downloads_folder = D:\Ime\Downloads
+
+# CSV log svih snimljenih mejlova (relativno od foldera skripte)
+log_file = log.csv
+
+[hotkeys]
+
+# Kombinacija tastera za pokretanje snimanja
+save = ctrl+shift+s
+
+[behaviour]
+
+# true = testni mod (samo detekcija, nista se ne snima)
+dry_run = false
+
+# Maksimalan broj mejlova u jednom batch-u
+max_batch = 100
+
+# Podrazumevani odredisni folder za premestanje (mora postojati u Outlooku)
+default_dest_folder = Inbox2
+
+# Lista foldera ponudjena pri pokretanju — odvojena zarezom
+dest_folder_options = Inbox2, Sent2, Archive2, Servis obradjeno2
+
+[delays]
+# Sve vrednosti su u sekundama.
+# Povecaj ih ako Outlook sporo reaguje na tvom racunaru.
+
+# Pauza posle Shift+F10 (otvaranje kontekst menija)
+context_menu_open = 1.20
+
+# Pauza posle Alt+F (otvaranje File menija)
+file_menu_open    = 0.80
+
+# Pauza posle strelice desno (otvaranje podmenija)
+submenu_open      = 0.50
+
+# Pauza posle Enter koji otvara Save As dialog
+save_as_open      = 1.80
+
+# Pauza posle Alt+N u Save As dijalogu
+alt_n             = 0.40
+
+# Pauza izmedju tastera pri navigaciji menijem
+key_nav           = 0.08
+
+[retries]
+
+# Maks. broj ponovnih pokusaja ako Save As dialog ne odgovori
+max_dialog_retry  = 5
+
+# Pauza izmedju ponovnih pokusaja dialoga (sekunde)
+dialog_retry_wait = 30
+
+# Maks. broj pokusaja za detekciju mejla (vs. group header)
+max_group_retry   = 3
