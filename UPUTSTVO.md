@@ -2,18 +2,33 @@
 
 ## Sta radi
 
-Skripta automatski snima selektovani mejl iz Outlooka kao .eml fajl na disk
-i premesta ga u odredisni folder (npr. Inbox2). Koristi se iskljucivo tastaturom.
+Skripta automatski snima mejl sa vrha liste u Outlooku kao .eml fajl na disk
+i premesta ga u odredisni folder (npr. Inbox2). Radi u batch-u — posle svakog
+mejla prelazi na sledeci. Koristi se iskljucivo tastaturom.
+
+---
+
+## Instalacija (jednom)
+
+```
+pip install -r requirements.txt
+```
+
+Kopiraj `config.ini.example` u `config.ini` (isti folder kao skripta) i podesi
+putanje (`save_folder`, `downloads_folder`).
 
 ---
 
 ## Pokretanje
 
+Dupli klik na `POKRENI.bat`, ili:
+
 ```
 python save_emails.py
 ```
 
-Pri startu skripta pita u koji Outlook folder da premesta mejlove:
+Pri startu skripta pita u koji Outlook folder da premesta mejlove
+(lista se podesava u `config.ini` → `dest_folder_options`):
 
 ```
 1. Inbox2  (default)
@@ -23,31 +38,37 @@ Pri startu skripta pita u koji Outlook folder da premesta mejlove:
 5. Unesi drugi naziv
 ```
 
-Pritisni Enter za default (Inbox2) ili unesi broj/naziv. Skripta zatim pocinje da slusa.
+Pritisni Enter za default ili unesi broj/naziv. Skripta zatim pocinje da slusa.
 
 ---
 
 ## Hotkey
 
-| Tastatura       | Akcija                                               |
-|-----------------|------------------------------------------------------|
-| Ctrl+Shift+S    | Snimi selektovani mejl i premesti u odredisni folder |
-| Ctrl+Shift+S    | Ako je batch aktivan — zaustavi posle tekuceg mejla  |
-| Enter (u CMD)   | Zatvori skriptu                                      |
+| Tastatura                    | Akcija                                                  |
+|------------------------------|---------------------------------------------------------|
+| Ctrl+Shift+S                 | Pokreni batch: snimi mejl sa vrha i premesti ga         |
+| Ctrl+Shift+S (tokom batch-a) | Zaustavi posle tekuceg mejla                            |
+| Ctrl+Shift+X                 | Hitno gasenje skripte — odmah                           |
+| Mis u gornji levi ugao       | Hitno zaustavljanje batch-a (pyautogui failsafe)        |
+| Enter (u CMD)                | Zatvori skriptu                                         |
+
+Hotkey-evi se menjaju u `config.ini` → `[hotkeys]`.
 
 ---
 
 ## Tok rada
 
-1. Otvori Outlook, klikni na mejl koji hoces da snimis
+1. Otvori Outlook
 2. Pritisni **Ctrl+Shift+S**
-3. Skripta automatski:
-   - Vraca fokus na listu mejlova
-   - Otvara kontekst meni (desni klik) i proverava da li je mejl selektovan
-   - Navigira do Save As → Email Message (*.eml)
-   - Snima fajl u SAVE_FOLDER sa nazivom: `DATUM_Predmet.eml`
+3. Skripta za svaki mejl automatski:
+   - Vraca fokus na gornji mejl u listi
+   - Prepoznaje da li je obican mejl ili Teams/meeting pozivnica
+   - Otvara Save As i snima fajl u `save_folder` sa nazivom `DATUM_Predmet.eml`
+   - Proverava da je na vrhu liste i dalje isti mejl
    - Premesta mejl u odredisni Outlook folder
-   - Automatski prelazi na sledeci mejl i ponavlja
+   - Prelazi na sledeci mejl (do `max_batch` mejlova)
+
+Dok batch radi, ne koristi racunar — skripta salje tastere u prozor koji ima fokus.
 
 ---
 
@@ -55,39 +76,52 @@ Pritisni Enter za default (Inbox2) ili unesi broj/naziv. Skripta zatim pocinje d
 
 | Fajl            | Sadrzaj                                        |
 |-----------------|------------------------------------------------|
-| `log.csv`       | Evidencija svakog snimljenog mejla             |
+| `log.csv`       | Evidencija svakog snimljenog/premestenog mejla |
 | `terminal.log`  | Kompletan ispis iz CMD prozora                 |
+
+Statusi u `log.csv`: `ok`, `moved`, `move_skipped`, `no_dialog`, `skip`,
+`error`, `aborted`, `batch_done`, `batch_stopped`.
 
 ---
 
 ## Kako radi (tehnicko)
 
-**Detekcija mejla:**
-Skripta otvara kontekst meni sa Shift+F10 i pretrazuje UIA stablo Outlook prozora
-trazeci element "Save as". Ako ga nema, znaci da je selektovan grupni header (datum/naziv
-grupe), a ne mejl — skripta ceka i pokusava ponovo.
+**Fokus na mejl:**
+Esc → Ctrl+1 (Mail) → Esc → Alt → 3×F6 → Home, sto stavlja fokus na prvi mejl u listi.
+
+**Obican mejl:**
+Alt → F otvara File meni. Skripta u UIA stablu trazi element "About Outlook" —
+ako ga nema, File meni se nije otvorio (fokus nije na mejlu, npr. na group
+header-u), pa ceka 5s i pokusava ponovo (do `max_group_retry` puta).
+Ako ga ima: A → Enter otvara Save As dialog.
+
+**Teams/meeting pozivnica:**
+Prepoznaje se po UIA nazivu itema (pocinje sa "Meeting"). Save As se otvara
+preko kontekst menija: Shift+F10 → End → 3×Up → Right → Enter.
 
 **Snimanje:**
-Navigira kroz meni: End → 3x Up → desno → Enter, sto otvara Save As dialog.
-Dialog se popunjava automatski (naziv fajla, folder) i potvrduje sa Enter.
-Skripta ceka da se fajl fizicki pojavi na disku pre nego sto nastavi.
+U Save As dialogu se u polje za naziv upisuje puna putanja
+(`save_folder\DATUM_Predmet.eml`) i potvrdjuje sa Enter. Ako fajl sa tim
+imenom vec postoji, dodaje se `_1`, `_2`, ... Skripta ceka da se fajl fizicki
+pojavi na disku pre nego sto nastavi.
 
-**Velika prilozena fajlovi:**
-Ako mejl ima veliku prilogu, Outlook ga preuzima sa servera pre snimanja.
-Skripta detektuje preuzimanje i ceka da se .eml fajl pojavi u Downloads folderu,
-zatim ga preimenuje i premesta u SAVE_FOLDER.
+**Bez Save As dialoga (Downloads):**
+Ako se Save As dialog ne pojavi, Outlook je mejl verovatno preuzeo u Downloads.
+Skripta ceka da se nov .eml pojavi u `downloads_folder`, cita mu Subject,
+preimenuje ga i premesta u `save_folder`.
 
 **Premestanje:**
-Posle snimanja, skripta ponovo otvara kontekst meni (Shift+F10) i navigira
-do "Move to folder", ukucava naziv odredisnog foldera i potvrdjuje.
-
-**Batch rezim:**
-Skripta moze da obradi do 100 mejlova bez prekida. Posle svakog mejla automatski
-prelazi na sledeci. Pritisak Ctrl+Shift+S u toku batch-a zaustavlja obradu
-posle trenutnog mejla.
+Posle snimanja skripta ponovo stavlja fokus na gornji mejl i proverava da je
+to isti mejl koji je snimljen (predmet mora biti sadrzan u nazivu itema).
+Ako je u medjuvremenu stigao nov mejl, NE premesta ga — upisuje
+`move_skipped` u log i prekida batch. Ako je isti: Ctrl+Shift+V → naziv
+foldera → Enter. Provera se iskljucuje sa `verify_before_move = false`.
 
 **Greske:**
-- Ako se pojavi Windows "File not found" dialog (Outlook bug), skripta ga zatvara
-  i ponovo pokusava snimanje
-- Ako mejl nije dostupan (nije ucitan), ceka i pokusava do 5 puta
-- Ako Outlook nije pronadjen, pokusava do 5 puta sa pauzom od 10 sekundi
+- Windows "File not found" dialog (Outlook bug) ili "Confirm Save As" —
+  skripta ga zatvara i ponavlja snimanje
+- Nema fajla ni u Downloads — ponavlja do `max_dialog_retry` puta,
+  sa pauzom `dialog_retry_wait` sekundi
+- Outlook nije pronadjen — pokusava do 5 puta sa pauzom od 10 sekundi
+- Svaka greska koja prekine batch vraca hotkey u normalno stanje, pa sledeci
+  Ctrl+Shift+S ponovo pokrece batch

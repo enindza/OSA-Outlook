@@ -2,7 +2,9 @@
 Outlook EML Saver — hotkey mod
 - Kliknes na mejl u Outlooku
 - Pritisnes Ctrl+Shift+S → snimi kao .eml + premesti u Inbox2
-- Pritisnes Ctrl+Shift+Q → ugasi skriptu
+- Ponovo Ctrl+Shift+S tokom batch-a → zaustavi posle tekuceg mejla
+- Ctrl+Shift+X → hitno gasenje skripte (odmah)
+- Enter u CMD prozoru → ugasi skriptu
 """
 import sys, io, time, os, re, csv, threading, shutil, email, ctypes
 import configparser, pathlib
@@ -75,11 +77,14 @@ import keyboard
 from datetime import datetime
 from pywinauto import Desktop
 
-pyautogui.FAILSAFE = False
+# Mis u gornji levi ugao ekrana = hitno zaustavljanje (pyautogui FailSafeException)
+pyautogui.FAILSAFE = True
 
 SAVE_FOLDER      = _path("paths",    "save_folder")
 LOG_FILE         = _relpath("paths", "log_file")
 HOTKEY_SAVE      = _cfg.get("hotkeys",   "save")
+HOTKEY_ABORT     = _cfg.get("hotkeys",   "abort", fallback="ctrl+shift+x")
+VERIFY_MOVE      = _cfg.getboolean("behaviour", "verify_before_move", fallback=True)
 DRY_RUN          = _cfg.getboolean("behaviour", "dry_run")
 DOWNLOADS_FOLDER = _path("paths",    "downloads_folder")
 
@@ -101,6 +106,7 @@ _pending_move    = False
 _pending_move_lk = threading.Lock()
 _pending_subject = ""   # cuva subject izmedju save i move faze
 _pending_file    = ""   # cuva filename izmedju save i move faze
+_pending_item    = ""   # UIA naziv snimljenog itema — provera pre premestanja
 
 # Odredisni folder za premestanje (unosi se pri startu)
 DEST_FOLDER = _cfg.get("behaviour", "default_dest_folder")
@@ -251,15 +257,36 @@ def is_meeting_item(win):
     return None, ""
 
 
+def _norm(text):
+    """Ostavlja samo slova i cifre (lowercase) — za poredjenje naziva/predmeta."""
+    return "".join(ch for ch in (text or "").lower() if ch.isalnum())
+
+
+def is_same_item(saved_item, saved_subject, current_item):
+    """
+    Proverava da li je fokusiran item isti mejl koji je upravo snimljen.
+    Predmet iz Save As dialoga / EML-a mora biti sadrzan u UIA nazivu itema
+    (poredi se samo po slovima i ciframa, jer Outlook u imenu fajla menja
+    nedozvoljene znakove). Ako predmet nije upotrebljiv, poredi se ceo naziv.
+    """
+    cur = _norm(current_item)
+    if not cur:
+        return False
+    subj = _norm(saved_subject)
+    if subj and subj != "email":
+        return subj in cur
+    return bool(_norm(saved_item)) and _norm(saved_item) == cur
+
+
 # ──────────────────────────────────────────────
 # Navigacija na gornji mejl u listi
 # ──────────────────────────────────────────────
 
 def navigate_to_top(win):
-    """Fokus na listu mejlova: Esc×2 → Ctrl+1 → 5×F6."""
+    """Fokus na gornji mejl u listi: Esc → Ctrl+1 → Esc → Alt → 3×F6 → Home."""
     win.set_focus()
     time.sleep(0.20)
-    print("  [TOP] Esc → Ctrl+1 → Esc → Alt → 3×F6...")
+    print("  [TOP] Esc → Ctrl+1 → Esc → Alt → 3×F6 → Home...")
     pyautogui.press("escape");       time.sleep(0.05)
     pyautogui.hotkey("ctrl", "1");   time.sleep(0.25)
     pyautogui.press("escape");       time.sleep(0.10)
@@ -279,7 +306,7 @@ def navigate_to_top(win):
 def open_saveas_via_contextmenu(win):
     """
     Otvara Save As dialog za Teams meeting putem Shift+F10 context menija:
-    Shift+F10 → End → Up×3 (Save as) → Right (podmeni) → Down (Save as EML) → Enter
+    Shift+F10 → End → Up×3 (Save as) → Right (podmeni) → Enter (Save as EML)
     """
     win.set_focus()
     time.sleep(0.20)
@@ -385,7 +412,7 @@ def handle_download_file(before_snapshot, date_str):
 
     # Procitaj Subject iz EML
     subject  = subject_from_eml(dl_path)
-    filename = sanitize_filename(f"{date_str}_{subject}") + ".eml"
+    filename = unique_filename(sanitize_filename(f"{date_str}_{subject}") + ".eml")
     dst_path = os.path.join(SAVE_FOLDER, filename)
 
     print(f"  [DOWNLOAD] Predmet : '{subject}'")
@@ -494,9 +521,10 @@ def find_new_error_dialog(before_handles):
 
 def find_save_dialog(timeout=120):
     """
-    Ceka Save As dialog do `timeout` sekundi.
+    Ceka Save As dialog do `timeout` sekundi (poziva se sa kratkim timeout-om;
+    ako dialog ne stigne, pozivalac trazi fajl u Downloads folderu).
     Ako detektuje download prozor (Outlook preuzima mejl sa servera),
-    stampa poruku i nastavlja da ceka — dialog ce se pojaviti posle downloada.
+    stampa poruku i nastavlja da ceka do isteka timeout-a.
     """
     deadline        = time.time() + timeout
     download_noted  = False
@@ -546,9 +574,6 @@ def get_subject_from_dialog(dialog):
             if name.lower().endswith(".eml"):
                 subject = name[:-4].strip()
                 break
-            if name.lower().endswith(" .eml"):
-                subject = name[:-5].strip()
-                break
             if name.lower().endswith(".msg"):
                 # Teams pozivnica — Save As dialog nudi .msg, ali mi snimamo kao .eml
                 subject = name[:-4].strip()
@@ -572,7 +597,7 @@ def handle_save_dialog(date_str):
         return None, "retry", ""
 
     subject  = get_subject_from_dialog(dialog)
-    filename = sanitize_filename(f"{date_str}_{subject}") + ".eml"
+    filename = unique_filename(sanitize_filename(f"{date_str}_{subject}") + ".eml")
     print(f"  Predmet : '{subject}'")
     print(f"  Fajl    : '{filename}'")
 
@@ -637,6 +662,11 @@ def move_to_inbox2(win):
 
 def on_save_hotkey():
     global _pending_move, _batch_remaining, _batch_done, _pending_subject, _pending_file
+    global _pending_item
+    # True kada je posao predat sledecem pozivu (move faza ili sledeci mejl).
+    # Ako nije predat, batch se u finally gasi — inace bi hotkey ostao
+    # "zaglavljen" (misli da batch jos traje i samo trazi zaustavljanje).
+    handed_off = False
     try:
         print(f"\n{'─'*50}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Hotkey")
@@ -653,10 +683,27 @@ def on_save_hotkey():
             _pending_move = False
             subj = _pending_subject
             fname = _pending_file
+            item = _pending_item
 
         if is_move:
             print(f"  [MODE] Premestanje u {DEST_FOLDER}...")
             navigate_to_top(win)
+
+            # Proveri da je na vrhu i dalje isti mejl koji je snimljen —
+            # ako je u medjuvremenu stigao nov mejl, ne premestamo ga.
+            if VERIFY_MOVE:
+                _, cur_item = is_meeting_item(win)
+                if not is_same_item(item, subj, cur_item):
+                    print(f"  !! [MOVE] Fokusiran item nije snimljeni mejl — NE premestam.")
+                    print(f"     snimljen : {subj!r}")
+                    print(f"     fokusiran: {cur_item[:80]!r}")
+                    log_entry(subj, fname, "move_skipped",
+                              f"na vrhu je drugi item: {cur_item[:80]}")
+                    toast("Na vrhu liste nije snimljeni mejl!\n"
+                          "Nije premesten. Batch prekinut.",
+                          boja="#922b21", trajanje=6)
+                    return
+
             move_to_inbox2(win)
 
             with _pending_move_lk:
@@ -678,6 +725,7 @@ def on_save_hotkey():
             elif remaining > 0:
                 toast(f"#{done} snimljeno i premesteno\nNastavljam...", boja="#1e8449", trajanje=2)
                 time.sleep(0.5)
+                handed_off = True
                 threading.Thread(target=on_save_hotkey, daemon=True).start()
             else:
                 toast(f"Batch gotov!\nObradjeno {done} mejlova.", boja="#1e8449", trajanje=5)
@@ -699,6 +747,7 @@ def on_save_hotkey():
         status       = None
         subject      = ""
         group_retries = 0
+        item_name     = ""
 
         for dialog_attempt in range(1, MAX_DIALOG_RETRY + MAX_GROUP_RETRY + 1):
 
@@ -846,13 +895,28 @@ def on_save_hotkey():
                 _pending_move    = True
                 _pending_subject = subject
                 _pending_file    = filename
+                _pending_item    = item_name
             time.sleep(0.5)
             print("  Pokrecim move fazu...")
+            handed_off = True
             threading.Thread(target=on_save_hotkey, daemon=True).start()
+        else:
+            print(f"  !! Nije uspelo ni posle svih pokusaja (poslednji status: {status})")
+            log_entry(subject, "", "error", f"iscrpljeni pokusaji: {status}")
+            toast("Snimanje nije uspelo.\nBatch prekinut.", boja="#922b21", trajanje=5)
 
+    except pyautogui.FailSafeException:
+        print("  !! FAILSAFE — mis u uglu ekrana, batch prekinut.")
+        log_entry("", "", "aborted", "pyautogui failsafe")
+        toast("Hitno zaustavljeno (mis u uglu).", boja="#922b21", trajanje=5)
     except Exception as e:
         print(f"  !! Neocekivana greska: {e}")
         log_entry("", "", "error", str(e))
+    finally:
+        if not handed_off:
+            with _pending_move_lk:
+                _batch_remaining = 0
+                _pending_move    = False
 
 
 # ──────────────────────────────────────────────
@@ -867,28 +931,31 @@ def main():
     print(f"  Folder : {SAVE_FOLDER}")
     print(f"  Log    : {LOG_FILE}")
     print(f"  Snimi  : {HOTKEY_SAVE.upper()}")
+    print(f"  Hitno  : {HOTKEY_ABORT.upper()}  (ili mis u gornji levi ugao)")
     print("=" * 55)
     print()
 
     # Izbor odredisnog foldera
-    opcije = [x.strip() for x in _cfg.get("behaviour", "dest_folder_options").split(",")]
+    opcije = [x.strip() for x in _cfg.get("behaviour", "dest_folder_options").split(",")
+              if x.strip()]
+    if DEST_FOLDER not in opcije:
+        opcije.insert(0, DEST_FOLDER)
+    drugi = len(opcije) + 1
+    default_idx = opcije.index(DEST_FOLDER) + 1
+
     print("  Odredisni folder za premestanje:")
     for i, naziv in enumerate(opcije, 1):
-        default_tag = " (default)" if naziv == DEST_FOLDER else ""
+        default_tag = " (default)" if i == default_idx else ""
         print(f"    {i}. {naziv}{default_tag}")
-    print(f"    5. Unesi drugi naziv")
+    print(f"    {drugi}. Unesi drugi naziv")
     print()
-    izbor = input("  Izbor [1]: ").strip()
+    izbor = input(f"  Izbor [{default_idx}]: ").strip()
 
-    if izbor == "" or izbor == "1":
-        DEST_FOLDER = opcije[0]
-    elif izbor == "2":
-        DEST_FOLDER = opcije[1]
-    elif izbor == "3":
-        DEST_FOLDER = opcije[2]
-    elif izbor == "4":
-        DEST_FOLDER = opcije[3]
-    elif izbor == "5":
+    if izbor == "":
+        pass  # ostaje default
+    elif izbor.isdigit() and 1 <= int(izbor) <= len(opcije):
+        DEST_FOLDER = opcije[int(izbor) - 1]
+    elif izbor == str(drugi):
         unos = input("  Naziv foldera: ").strip()
         if unos:
             DEST_FOLDER = unos
@@ -916,7 +983,18 @@ def main():
             _stop_requested = False
             threading.Thread(target=on_save_hotkey, daemon=True).start()
 
+    def on_abort():
+        print("\n  [ABORT] Hitno gasenje skripte.")
+        log_entry("", "", "aborted", "hotkey")
+        try:
+            _log_file.flush()
+            _tee_out.flush()
+        except Exception:
+            pass
+        os._exit(1)
+
     keyboard.add_hotkey(HOTKEY_SAVE, on_hotkey, suppress=True)
+    keyboard.add_hotkey(HOTKEY_ABORT, on_abort, suppress=True)
 
     # Na startu: prebaci fokus na gornji mejl
     win = get_outlook_win_retry()

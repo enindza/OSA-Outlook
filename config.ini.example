@@ -1,6 +1,7 @@
 # =============================================================
 #  Outlook EML Saver — konfiguracija
-#  Edituj ovu datoteku, ne skriptu.
+#  Kopiraj ovaj fajl u config.ini (isti folder kao skripta)
+#  i edituj config.ini, ne skriptu.
 #  Putanje moraju biti apsolutne (npr. C:\Outlook\EML)
 #  %USERPROFILE% i %USERNAME% se automatski razvijaju.
 # =============================================================
@@ -11,7 +12,7 @@
 save_folder = S:\Outlook\OSA
 
 # Windows Downloads folder — Outlook ponekad ovde privremeno preuzme mejl
-downloads_folder = D:\Ime\Downloads
+downloads_folder = %USERPROFILE%\Downloads
 
 # CSV log svih snimljenih mejlova (relativno od foldera skripte)
 log_file = log.csv
@@ -21,6 +22,9 @@ log_file = log.csv
 # Kombinacija tastera za pokretanje snimanja
 save = ctrl+shift+s
 
+# Hitno gasenje skripte (odmah, bez cekanja tekuceg mejla)
+abort = ctrl+shift+x
+
 [behaviour]
 
 # true = testni mod (samo detekcija, nista se ne snima)
@@ -28,6 +32,10 @@ dry_run = false
 
 # Maksimalan broj mejlova u jednom batch-u
 max_batch = 100
+
+# true = pre premestanja proveri da je na vrhu liste isti mejl koji je snimljen
+# (ako je u medjuvremenu stigao nov mejl, ne premesta ga i prekida batch)
+verify_before_move = true
 
 # Podrazumevani odredisni folder za premestanje (mora postojati u Outlooku)
 default_dest_folder = Inbox2
